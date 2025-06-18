@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IC50 計算與繪圖工具</title>
+    <style>
+        /* 簡單的 CSS 樣式，讓介面看起來整潔 */
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 20px; 
+            background-color: #f4f7f6;
+            color: #333;
+        }
+        .container { 
+            max-width: 900px; 
+            margin: auto; 
+            background-color: #ffffff; 
+            padding: 30px; 
+            border-radius: 10px; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1); 
+        }
+        h1, h2 { 
+            color: #2c3e50; 
+            border-bottom: 2px solid #e0e0e0; 
+            padding-bottom: 10px; 
+            margin-bottom: 20px; 
+        }
+        label { 
+            display: block; 
+            margin-bottom: 8px; 
+            font-weight: bold; 
+            color: #555;
+        }
+        input[type="number"] { 
+            width: 100px; 
+            padding: 8px; 
+            border: 1px solid #ccc; 
+            border-radius: 5px; 
+            margin-right: 10px; /* 控制輸入框間距 */
+        }
+        button { 
+            background-color: #4CAF50; /* 綠色按鈕 */
+            color: white; 
+            padding: 10px 20px; 
+            border: none; 
+            border-radius: 5px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin-top: 15px; 
+            transition: background-color 0.3s ease;
+        }
+        button:hover { 
+            background-color: #45a049; 
+        }
+        #data-inputs .data-row { 
+            display: flex; 
+            align-items: center; 
+            margin-bottom: 10px; 
+            background-color: #f9f9f9; 
+            padding: 8px; 
+            border-radius: 5px; 
+        }
+        #data-inputs .data-row.header { 
+            font-weight: bold; 
+            background-color: #e2eafc; 
+            padding: 10px 8px; 
+            margin-bottom: 15px; 
+            border-radius: 5px;
+        }
+        #results { 
+            margin-top: 30px; 
+            border-top: 1px solid #e0e0e0; 
+            padding-top: 20px; 
+        }
+        #results p { 
+            font-size: 1.1em; 
+            margin-bottom: 8px; 
+        }
+        #results span { 
+            font-weight: bold; 
+            color: #007bff; /* 藍色結果字體 */
+        }
+        #plot-area img { 
+            max-width: 100%; 
+            height: auto; 
+            display: block; /* 讓圖片居中 */
+            margin: 20px auto;
+            border: 1px solid #e0e0e0;
+            border-radius: 5px;
+        }
+        .error-message {
+            color: red;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>IC50 計算與繪圖工具</h1>
+
+        <p>請輸入無藥物對照組、背景的吸光值，以及各藥物濃度下三重複的吸光值。請確保輸入數據的準確性。</p>
+
+        <label for="control_abs">無藥物對照組吸光值 (Control Absorbance):</label>
+        <input type="number" id="control_abs" value="0.5" step="0.001" required>
+
+        <label for="background_abs">背景吸光值 (Background Absorbance):</label>
+        <input type="number" id="background_abs" value="0.05" step="0.001" required>
+
+        <h3>數據輸入</h3>
+        <div id="data-inputs">
+            <div class="data-row header">
+                <label style="width: 100px;">濃度</label>
+                <label style="width: 100px;">重複 1</label>
+                <label style="width: 100px;">重複 2</label>
+                <label style="width: 100px;">重複 3</label>
+            </div>
+            <div class="data-row">
+                <input type="number" class="concentration" value="0.1" step="0.1" placeholder="濃度">
+                <input type="number" class="replicate" value="0.48" step="0.001" placeholder="重複1">
+                <input type="number" class="replicate" value="0.49" step="0.001" placeholder="重複2">
+                <input type="number" class="replicate" value="0.47" step="0.001" placeholder="重複3">
+            </div>
+            <div class="data-row">
+                <input type="number" class="concentration" value="1" step="0.1" placeholder="濃度">
+                <input type="number" class="replicate" value="0.45" step="0.001" placeholder="重複1">
+                <input type="number" class="replicate" value="0.46" step="0.001" placeholder="重複2">
+                <input type="number" class="replicate" value="0.44" step="0.001" placeholder="重複3">
+            </div>
+            <div class="data-row">
+                <input type="number" class="concentration" value="10" step="0.1" placeholder="濃度">
+                <input type="number" class="replicate" value="0.25" step="0.001" placeholder="重複1">
+                <input type="number" class="replicate" value="0.26" step="0.001" placeholder="重複2">
+                <input type="number" class="replicate" value="0.24" step="0.001" placeholder="重複3">
+            </div>
+             <div class="data-row">
+                <input type="number" class="concentration" value="100" step="0.1" placeholder="濃度">
+                <input type="number" class="replicate" value="0.08" step="0.001" placeholder="重複1">
+                <input type="number" class="replicate" value="0.07" step="0.001" placeholder="重複2">
+                <input type="number" class="replicate" value="0.09" step="0.001" placeholder="重複3">
+            </div>
+            <div class="data-row">
+                <input type="number" class="concentration" value="1000" step="0.1" placeholder="濃度">
+                <input type="number" class="replicate" value="0.05" step="0.001" placeholder="重複1">
+                <input type="number" class="replicate" value="0.05" step="0.001" placeholder="重複2">
+                <input type="number" class="replicate" value="0.05" step="0.001" placeholder="重複3">
+            </div>
+        </div>
+        <button onclick="addRow()">新增一行數據</button>
+        <button onclick="calculate()">計算 IC50 並繪圖</button>
+
+        <div id="error-message" class="error-message"></div>
+
+        <div id="results">
+            <h2>計算結果</h2>
+            <p>IC50: <span id="ic50-result">N/A</span></p>
+            <p>Top 平台值: <span id="top-result">N/A</span></p>
+            <p>Bottom 平台值: <span id="bottom-result">N/A</span></p>
+            <p>HillSlope (希爾斜率): <span id="hillslope-result">N/A</span></p>
+        </div>
+
+        <div id="plot-area">
+            <h2>劑量反應曲線</h2>
+            <img id="dose-response-plot" src="" alt="IC50 劑量反應曲線將顯示在這裡">
+        </div>
+    </div>
+
+    <script>
+        // 增加一行數據輸入框
+        function addRow() {
+            const dataInputs = document.getElementById('data-inputs');
+            const newRow = document.createElement('div');
+            newRow.className = 'data-row';
+            // 複製一個現有行的結構，清除值
+            newRow.innerHTML = `
+                <input type="number" class="concentration" step="0.1" placeholder="濃度">
+                <input type="number" class="replicate" step="0.001" placeholder="重複1">
+                <input type="number" class="replicate" step="0.001" placeholder="重複2">
+                <input type="number" class="replicate" step="0.001" placeholder="重複3">
+            `;
+            dataInputs.appendChild(newRow);
+        }
+
+        // 觸發計算的函數
+        async function calculate() {
+            const errorMessageDiv = document.getElementById('error-message');
+            errorMessageDiv.textContent = ''; // 清空之前的錯誤信息
+
+            const controlAbsInput = document.getElementById('control_abs');
+            const backgroundAbsInput = document.getElementById('background_abs');
+
+            const controlAbs = parseFloat(controlAbsInput.value);
+            const backgroundAbs = parseFloat(backgroundAbsInput.value);
+
+            // 簡單的輸入檢查
+            if (isNaN(controlAbs) || isNaN(backgroundAbs) || controlAbs <= backgroundAbs) {
+                errorMessageDiv.textContent = "請輸入有效的對照組和背景吸光值，且對照組需大於背景值。";
+                return;
+            }
+
+            const dataRows = document.querySelectorAll('#data-inputs .data-row:not(.header)');
+            let concentrations = [];
+            let rawReplicates = []; // 儲存原始的三重複吸光值，將其傳遞給後端處理
+
+            dataRows.forEach(row => {
+                const concInput = row.querySelector('.concentration');
+                const repInputs = row.querySelectorAll('.replicate');
+
+                const conc = parseFloat(concInput.value);
+                // 如果濃度不是數字或者沒有輸入，則跳過此行數據
+                if (isNaN(conc)) return; 
+
+                concentrations.push(conc);
+
+                let currentReps = [];
+                repInputs.forEach(input => {
+                    const repVal = parseFloat(input.value);
+                    // 即使是 NaN 也加入，讓後端決定如何處理缺失值
+                    currentReps.push(isNaN(repVal) ? null : repVal); 
+                });
+                rawReplicates.push(currentReps);
+            });
+
+            if (concentrations.length === 0) {
+                errorMessageDiv.textContent = "請至少輸入一組有效的濃度數據。";
+                return;
+            }
+
+            try {
+                // 發送數據到後端 Flask 應用
+                const response = await fetch('/calculate_ic50', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        concentrations: concentrations,
+                        raw_replicates: rawReplicates,
+                        control_abs: controlAbs,
+                        background_abs: backgroundAbs
+                    })
+                });
+
+                const result = await response.json(); // 解析後端返回的 JSON 數據
+
+                if (response.ok) { // 如果 HTTP 狀態碼是 2xx (成功)
+                    // 更新網頁上的結果
+                    document.getElementById('ic50-result').textContent = result.ic50;
+                    document.getElementById('top-result').textContent = result.top;
+                    document.getElementById('bottom-result').textContent = result.bottom;
+                    document.getElementById('hillslope-result').textContent = result.hillslope;
+                    document.getElementById('dose-response-plot').src = result.plot_image; // 更新圖片
+                } else {
+                    // 顯示後端返回的錯誤信息
+                    errorMessageDiv.textContent = '計算失敗: ' + (result.error || '未知錯誤');
+                }
+
+            } catch (error) {
+                // 捕獲網路錯誤或 JSON 解析錯誤
+                errorMessageDiv.textContent = '與伺服器通訊發生錯誤: ' + error.message;
+                console.error('Error:', error);
+            }
+        }
+    </script>
+</body>
+</html>
