@@ -112,7 +112,7 @@ def calculate_ic50_combined():
         plt.title('IC50 劑量反應曲線')
         plt.xlabel('Log$_{10}$ (藥物濃度)')
         plt.ylabel('Viability (%)')
-        plt.ylim(0, 120)
+        plt.ylim(0, 150)
         plt.legend(loc='best', fontsize='small')
         plt.tight_layout()
 
