@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>多曲線 IC50 計算與繪圖工具</title>
+    <title>IC50 計算與儲存工具</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background-color: #f4f7f6; color: #333; }
         .container { max-width: 1200px; margin: auto; background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
         h1, h2 { color: #2c3e50; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; margin-bottom: 20px; }
         label { display: block; margin-bottom: 8px; font-weight: bold; color: #555; }
-        input[type="text"], input[type="number"] { width: calc(100% - 20px); padding: 8px; border: 1px solid #ccc; border-radius: 5px; margin-bottom: 10px; }
+        input[type="text"], input[type="number"] { width: calc(100% - 22px); padding: 10px; border: 1px solid #ccc; border-radius: 5px; margin-bottom: 15px; }
         button { background-color: #4CAF50; color: white; padding: 12px 25px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin: 10px 5px; transition: background-color 0.3s ease; }
         button.remove-btn { background-color: #f44336; }
         button.remove-row-btn { background-color: #e74c3c; padding: 5px 10px; font-size: 12px; margin-left: 10px; }
@@ -18,56 +18,41 @@
         .data-row { display: flex; align-items: center; margin-bottom: 10px; }
         .data-row label, .data-row input { margin-right: 10px; }
         .data-row input { width: 100px; }
-        .results-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        .results-table th, .results-table td { border: 1px solid #ddd; padding: 12px; text-align: left; }
-        .results-table th { background-color: #e2eafc; }
-        #plot-area img { max-width: 100%; height: auto; display: block; margin: 20px auto; border: 1px solid #e0e0e0; border-radius: 5px; }
         .error-message { color: red; font-weight: bold; margin-top: 10px; }
+        .nav { margin-bottom: 20px; }
+        .nav a { text-decoration: none; background-color: #6c757d; color: white; padding: 10px 20px; border-radius: 5px; margin-right: 10px; }
+        .nav a:hover { background-color: #5a6268; }
+        #organoid-id-section { margin-bottom: 30px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>多曲線 IC50 計算與繪圖工具</h1>
-        <p>點擊 "新增實驗" 來加入多組數據進行比較。每組實驗都可以有獨立的對照組和背景值。</p>
+        <div class="nav">
+            <a href="/">IC50 計算器</a>
+            <a href="/dashboard">儀表板</a>
+        </div>
+
+        <h1>IC50 計算與儲存</h1>
+        <p>為一個類器官 (Organoid) 輸入三種藥物 (5FU, Irinotecan, Oxaliplatin) 的數據，計算 IC50 並將結果儲存到儀表板。</p>
+
+        <div id="organoid-id-section">
+            <label for="organoid-id">Organoid ID:</label>
+            <input type="text" id="organoid-id" placeholder="例如: PatientX-Tumor1">
+        </div>
 
         <div id="experiments-container">
             <!-- 實驗區塊將通過 JavaScript 動態插入 -->
         </div>
 
-        <button onclick="addExperiment()">新增實驗</button>
-        <button onclick="calculate()" style="background-color: #007bff;">計算 IC50 並繪圖</button>
+        <button onclick="submitToDashboard()" style="background-color: #007bff;">計算並儲存至儀表板</button>
 
         <div id="error-message" class="error-message"></div>
-
-        <div id="results-section" style="display:none;">
-            <h2>計算結果</h2>
-            <table class="results-table">
-                <thead>
-                    <tr>
-                        <th>實驗名稱</th>
-                        <th>IC50</th>
-                        <th>Top</th>
-                        <th>Bottom</th>
-                        <th>HillSlope</th>
-                    </tr>
-                </thead>
-                <tbody id="results-tbody">
-                </tbody>
-            </table>
-        </div>
-
-        <div id="plot-area" style="display:none;">
-            <h2>劑量反應曲線</h2>
-            <img id="dose-response-plot" src="" alt="IC50 劑量反應曲線將顯示在這裡">
-        </div>
     </div>
 
     <template id="experiment-template">
         <div class="experiment-block">
-            <button class="remove-btn" onclick="this.parentElement.remove()">移除此實驗</button>
-            <h3>實驗數據</h3>
-            <label>實驗名稱:</label>
-            <input type="text" class="experiment-name" placeholder="例如: Organoid A, Drug X">
+            <h3>實驗數據: <span class="drug-name-display"></span></h3>
+            <input type="hidden" class="experiment-name">
             
             <label>無藥物對照組吸光值 (Control):</label>
             <input type="number" class="control_abs" step="0.001" required>
@@ -83,28 +68,23 @@
                     <label style="width: 100px;">重複 2</label>
                     <label style="width: 100px;">重複 3</label>
                 </div>
-                <!-- 數據行將動態添加 -->
             </div>
             <button onclick="addDataRow(this)">新增一行數據</button>
         </div>
     </template>
 
     <script>
-        let experimentCounter = 0;
+        const requiredDrugs = ["5FU", "Irinotecan", "Oxaliplatin"];
 
-        function addExperiment() {
-            experimentCounter++;
+        function addExperiment(drugName) {
             const template = document.getElementById('experiment-template').content.cloneNode(true);
             const experimentBlock = template.querySelector('.experiment-block');
-            experimentBlock.dataset.id = experimentCounter;
             
-            const nameInput = experimentBlock.querySelector('.experiment-name');
-            nameInput.placeholder = `例如: Organoid ${experimentCounter}, Drug X`;
-            nameInput.value = `實驗 ${experimentCounter}`;
+            experimentBlock.querySelector('.drug-name-display').textContent = drugName;
+            experimentBlock.querySelector('.experiment-name').value = drugName;
 
-            // Add a few default data rows
             const dataInputs = experimentBlock.querySelector('.data-inputs');
-            for (let i = 0; i < 4; i++) {
+            for (let i = 0; i < 5; i++) { // Add 5 default rows
                 dataInputs.appendChild(createDataRow());
             }
 
@@ -129,15 +109,21 @@
             return newRow;
         }
 
-        async function calculate() {
+        async function submitToDashboard() {
             const errorMessageDiv = document.getElementById('error-message');
             errorMessageDiv.textContent = '';
+
+            const organoidId = document.getElementById('organoid-id').value.trim();
+            if (!organoidId) {
+                errorMessageDiv.textContent = "請務必填寫 Organoid ID。";
+                return;
+            }
 
             const experiments = [];
             const experimentBlocks = document.querySelectorAll('.experiment-block');
 
             for (const block of experimentBlocks) {
-                const name = block.querySelector('.experiment-name').value.trim() || `實驗 ${block.dataset.id}`;
+                const name = block.querySelector('.experiment-name').value;
                 const controlAbs = parseFloat(block.querySelector('.control_abs').value);
                 const backgroundAbs = parseFloat(block.querySelector('.background_abs').value);
 
@@ -177,37 +163,23 @@
                 }
             }
 
-            if (experiments.length === 0) {
-                errorMessageDiv.textContent = "請至少輸入一組有效的實驗數據。";
+            if (experiments.length < requiredDrugs.length) {
+                errorMessageDiv.textContent = "請為所有三種藥物輸入數據。";
                 return;
             }
 
             try {
-                const response = await fetch('/calculate_ic50', {
+                const response = await fetch('/calculate_and_store', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ experiments: experiments })
+                    body: JSON.stringify({ organoid_id: organoidId, experiments: experiments })
                 });
 
                 const result = await response.json();
 
                 if (response.ok) {
-                    const resultsTbody = document.getElementById('results-tbody');
-                    resultsTbody.innerHTML = ''; // Clear previous results
-                    result.results.forEach(res => {
-                        const row = `<tr>
-                            <td>${res.name}</td>
-                            <td>${res.ic50}</td>
-                            <td>${res.top}</td>
-                            <td>${res.bottom}</td>
-                            <td>${res.hillslope}</td>
-                        </tr>`;
-                        resultsTbody.innerHTML += row;
-                    });
-
-                    document.getElementById('results-section').style.display = 'block';
-                    document.getElementById('plot-area').style.display = 'block';
-                    document.getElementById('dose-response-plot').src = result.plot_image;
+                    // On success, redirect to the dashboard
+                    window.location.href = result.redirect_url;
                 } else {
                     errorMessageDiv.textContent = '計算失敗: ' + (result.error || '未知錯誤');
                 }
@@ -218,9 +190,9 @@
             }
         }
         
-        // Add one experiment block by default on page load
+        // Add the three required experiment blocks by default on page load
         window.onload = () => {
-            addExperiment();
+            requiredDrugs.forEach(drug => addExperiment(drug));
         };
     </script>
 </body>

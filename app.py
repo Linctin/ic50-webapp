@@ -5,132 +5,175 @@ from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 import io
 import base64
+import psycopg2
+import os
 
 # --- Matplotlib 中文顯示設定 ---
-# 使用支援中文的字體，例如 'Microsoft JhengHei' for Windows
 plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei'] 
-# 解決負號顯示問題
 plt.rcParams['axes.unicode_minus'] = False
 
 # Flask 應用初始化
 app = Flask(__name__)
 
+# --- Database Connection ---
+def get_db_connection():
+    conn = psycopg2.connect(
+        host=os.environ.get("DB_HOST", "dpg-d253m93e5dus73f7i4eg-a.oregon-postgres.render.com"),
+        database=os.environ.get("DB_NAME", "ic50_5fu_iri_oxa"),
+        user=os.environ.get("DB_USER", "ic50_5fu_iri_oxa_user"),
+        password=os.environ.get("DB_PASSWORD", "Hnwas25AX7N9JR8p4eeuAX1ewrx9zT80")
+    )
+    return conn
+
 # --- 四參數邏輯回歸模型 ---
 def logistic_4param(x, top, bottom, ic50_log, hillslope):
     return bottom + (top - bottom) / (1 + (10**(x - ic50_log))**hillslope)
 
-# --- 網頁路由與邏輯 ---
+# --- 主頁和儀表板路由 ---
 @app.route('/')
 def index():
     return render_template('index.html')
 
-@app.route('/calculate_ic50', methods=['POST'])
-def calculate_ic50_combined():
+@app.route('/dashboard')
+def dashboard():
+    return render_template('dashboard.html')
+
+# --- API Endpoints ---
+@app.route('/api/dashboard_data', methods=['GET'])
+def get_dashboard_data():
     try:
-        all_experiments_data = request.json.get('experiments', [])
-        if not all_experiments_data:
-            raise ValueError("沒有提供任何實驗數據。")
-
-        results = []
-        plt.figure(figsize=(12, 8))
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT organoid_id, ic50_5fu, z_score_5fu, ic50_irinotecan, z_score_irinotecan, ic50_oxaliplatin, z_score_oxaliplatin, composite_score FROM organoid_results ORDER BY composite_score DESC")
+        data = cur.fetchall()
+        cur.close()
+        conn.close()
         
-        colors = plt.cm.viridis(np.linspace(0, 1, len(all_experiments_data)))
+        results = []
+        for row in data:
+            results.append({
+                "organoid_id": row[0],
+                "ic50_5fu": f"{row[1]:.2f}",
+                "z_score_5fu": f"{row[2]:.2f}",
+                "ic50_irinotecan": f"{row[3]:.2f}",
+                "z_score_irinotecan": f"{row[4]:.2f}",
+                "ic50_oxaliplatin": f"{row[5]:.2f}",
+                "z_score_oxaliplatin": f"{row[6]:.2f}",
+                "composite_score": f"{row[7]:.2f}"
+            })
+        return jsonify(results)
+    except Exception as e:
+        print(f"Error fetching dashboard data: {e}")
+        return jsonify({"error": "無法獲取儀表板數據。"}), 500
 
-        for i, experiment in enumerate(all_experiments_data):
-            experiment_name = experiment.get('name', f'Experiment {i+1}')
-            
-            if not all(k in experiment for k in ['concentrations', 'raw_replicates', 'control_abs', 'background_abs']):
-                raise ValueError(f"實驗 '{experiment_name}' 缺少必要的數據。")
+@app.route('/calculate_and_store', methods=['POST'])
+def calculate_and_store():
+    data = request.json
+    organoid_id = data.get('organoid_id')
+    experiments = data.get('experiments', [])
+    
+    if not organoid_id:
+        return jsonify({"error": "必須提供 Organoid ID。"}), 400
+        
+    required_drugs = {"5FU", "Irinotecan", "Oxaliplatin"}
+    provided_drugs = {exp['name'] for exp in experiments}
+    if not required_drugs.issubset(provided_drugs):
+        return jsonify({"error": f"缺少必要的藥物數據，需要: {', '.join(required_drugs)}"}), 400
 
-            concentrations = np.array(experiment['concentrations'], dtype=float)
-            raw_replicates = [np.array([val for val in r if val is not None], dtype=float) for r in experiment['raw_replicates']]
-            control_abs = float(experiment['control_abs'])
-            background_abs = float(experiment['background_abs'])
+    calculated_results = {}
+
+    # 1. Calculate IC50 for each drug
+    for exp in experiments:
+        try:
+            concentrations = np.array(exp['concentrations'], dtype=float)
+            raw_replicates = [np.array([val for val in r if val is not None], dtype=float) for r in exp['raw_replicates']]
+            control_abs = float(exp['control_abs'])
+            background_abs = float(exp['background_abs'])
 
             if (control_abs - background_abs) == 0:
-                raise ValueError(f"實驗 '{experiment_name}' 的對照組和背景值相同，無法正規化。")
+                raise ValueError("對照組和背景值相同。")
 
-            mean_viabilities = []
-            stds = []
-            for reps in raw_replicates:
-                if reps.size == 0:
-                    mean_viabilities.append(np.nan)
-                    stds.append(np.nan)
-                    continue
-
-                mean_abs = np.mean(reps)
-                std_abs = np.std(reps)
-                
-                normalized_viability = ((mean_abs - background_abs) / (control_abs - background_abs)) * 100
-                std_viability = (std_abs / (control_abs - background_abs)) * 100
-                
-                mean_viabilities.append(normalized_viability)
-                stds.append(std_viability)
-
+            mean_viabilities = [((np.mean(reps) - background_abs) / (control_abs - background_abs)) * 100 for reps in raw_replicates if reps.size > 0]
+            
             valid_indices = ~np.isnan(mean_viabilities)
             if np.sum(valid_indices) < 4:
-                raise ValueError(f"實驗 '{experiment_name}' 的有效數據點不足4個，無法擬合。")
+                raise ValueError("有效數據點不足4個。")
 
             valid_concentrations = concentrations[valid_indices]
             valid_mean_viabilities = np.array(mean_viabilities)[valid_indices]
-            valid_stds = np.array(stds)[valid_indices]
-            
             log_concentrations = np.log10(valid_concentrations)
 
-            initial_top = np.max(valid_mean_viabilities) if np.any(valid_mean_viabilities) else 100
-            initial_bottom = np.min(valid_mean_viabilities) if np.any(valid_mean_viabilities) else 0
-            initial_ic50_log = np.mean(log_concentrations)
-            initial_guess = [initial_top, initial_bottom, initial_ic50_log, 1.0]
-            
+            initial_guess = [100, 0, np.mean(log_concentrations), 1.0]
             bounds = ([0, -np.inf, -np.inf, 0.1], [np.inf, np.inf, np.inf, 5.0])
-
-            try:
-                params, _ = curve_fit(logistic_4param, log_concentrations, valid_mean_viabilities,
-                                      p0=initial_guess, bounds=bounds, maxfev=10000)
-            except RuntimeError:
-                raise ValueError(f"實驗 '{experiment_name}' 無法找到最佳擬合曲線，請檢查數據。")
-
-            top_fit, bottom_fit, ic50_log_fit, hillslope_fit = params
-            ic50_calculated = 10**ic50_log_fit
-
-            results.append({
-                'name': experiment_name,
-                'ic50': f'{ic50_calculated:.3f}',
-                'top': f'{top_fit:.2f}',
-                'bottom': f'{bottom_fit:.2f}',
-                'hillslope': f'{hillslope_fit:.2f}'
-            })
-
-            color = colors[i]
-            plt.errorbar(log_concentrations, valid_mean_viabilities, yerr=valid_stds, fmt='o', capsize=4, color=color)
             
-            x_fit = np.linspace(min(log_concentrations) - 0.5, max(log_concentrations) + 0.5, 200)
-            y_fit = logistic_4param(x_fit, *params)
-            plt.plot(x_fit, y_fit, color=color, linestyle='-', label=experiment_name)
+            params, _ = curve_fit(logistic_4param, log_concentrations, valid_mean_viabilities, p0=initial_guess, bounds=bounds, maxfev=10000)
+            ic50_calculated = 10**params[2]
+            calculated_results[exp['name']] = ic50_calculated
 
-        # --- 設定組合圖表 ---
-        plt.title('IC50')
-        plt.xlabel('Log$_{10}$ ')
-        plt.ylabel('Viability (%)')
-        plt.ylim(0, 150) #調整成上限150%
-        plt.legend(loc='best', fontsize='small')
-        plt.tight_layout()
+        except (ValueError, RuntimeError) as e:
+            return jsonify({"error": f"計算 {exp['name']} IC50 時出錯: {e}"}), 400
 
-        img_buffer = io.BytesIO()
-        plt.savefig(img_buffer, format='png')
-        plt.close()
-        img_b64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
+    # 2. Calculate Z-scores and save to DB
+    z_scores = {}
+    conn = get_db_connection()
+    cur = conn.cursor()
 
-        return jsonify({
-            'results': results,
-            'plot_image': f'data:image/png;base64,{img_b64}'
-        })
+    try:
+        for drug_name, ic50_value in calculated_results.items():
+            # Save to history
+            cur.execute("INSERT INTO ic50_history (drug_name, ic50_value) VALUES (%s, %s)", (drug_name, ic50_value))
+            
+            # Get historical data for Z-score calculation
+            cur.execute("SELECT ic50_value FROM ic50_history WHERE drug_name = %s", (drug_name,))
+            history = cur.fetchall()
+            
+            if len(history) > 1:
+                values = [h[0] for h in history]
+                mean_val = np.mean(values)
+                std_dev = np.std(values)
+                if std_dev == 0:
+                    z_scores[drug_name] = 0.0
+                else:
+                    z_scores[drug_name] = (ic50_value - mean_val) / std_dev
+            else:
+                z_scores[drug_name] = 0.0 # Not enough data for Z-score
 
-    except ValueError as ve:
-        return jsonify({'error': str(ve)}), 400
+        # 3. Calculate composite score and save the final result
+        composite_score = sum(z_scores.values())
+        
+        # Use INSERT ... ON CONFLICT to handle updates
+        sql = """
+            INSERT INTO organoid_results (organoid_id, ic50_5fu, z_score_5fu, ic50_irinotecan, z_score_irinotecan, ic50_oxaliplatin, z_score_oxaliplatin, composite_score)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (organoid_id) DO UPDATE SET
+                ic50_5fu = EXCLUDED.ic50_5fu,
+                z_score_5fu = EXCLUDED.z_score_5fu,
+                ic50_irinotecan = EXCLUDED.ic50_irinotecan,
+                z_score_irinotecan = EXCLUDED.z_score_irinotecan,
+                ic50_oxaliplatin = EXCLUDED.ic50_oxaliplatin,
+                z_score_oxaliplatin = EXCLUDED.z_score_oxaliplatin,
+                composite_score = EXCLUDED.composite_score,
+                created_at = CURRENT_TIMESTAMP;
+        """
+        cur.execute(sql, (
+            organoid_id,
+            calculated_results['5FU'], z_scores['5FU'],
+            calculated_results['Irinotecan'], z_scores['Irinotecan'],
+            calculated_results['Oxaliplatin'], z_scores['Oxaliplatin'],
+            composite_score
+        ))
+        
+        conn.commit()
+        
+        return jsonify({"message": "計算成功並已儲存。", "redirect_url": "/dashboard"})
+
     except Exception as e:
-        print(f"發生未預期錯誤: {e}")
-        return jsonify({'error': f'計算發生錯誤：{str(e)}'}), 500
+        conn.rollback()
+        print(f"Database error: {e}")
+        return jsonify({"error": "數據庫操作失敗。"}), 500
+    finally:
+        cur.close()
+        conn.close()
 
 # 運行 Flask 應用
 if __name__ == '__main__':
